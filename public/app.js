@@ -11,6 +11,7 @@ const celebrationEl = document.getElementById("celebration");
 const celebrationTextEl = document.getElementById("celebrationText");
 const confettiWrapEl = document.getElementById("confettiWrap");
 const roomCodeInput = document.getElementById("roomCodeInput");
+const copyCodeBtn = document.getElementById("copyCodeBtn");
 const createRoomBtn = document.getElementById("createRoomBtn");
 const joinRoomBtn = document.getElementById("joinRoomBtn");
 const leaveRoomBtn = document.getElementById("leaveRoomBtn");
@@ -21,6 +22,9 @@ const gameTabBtn = document.getElementById("gameTabBtn");
 const setupScreen = document.getElementById("setupScreen");
 const gameScreen = document.getElementById("gameScreen");
 const soundToggleBtn = document.getElementById("soundToggleBtn");
+
+const ROOM_CODE_KEY = "xox_room_code";
+const PLAYER_TOKEN_KEY = "xox_player_token";
 
 let currentState = null;
 let inRoom = false;
@@ -36,6 +40,34 @@ function setSoundEnabled(enabled) {
   localStorage.setItem("xox_sound_enabled", soundEnabled ? "true" : "false");
   soundToggleBtn.textContent = soundEnabled ? "Sound: ON" : "Sound: OFF";
   soundToggleBtn.classList.toggle("off", !soundEnabled);
+}
+
+function storeSession(roomCode, playerToken) {
+  localStorage.setItem(ROOM_CODE_KEY, roomCode);
+  localStorage.setItem(PLAYER_TOKEN_KEY, playerToken);
+}
+
+function clearSession() {
+  localStorage.removeItem(ROOM_CODE_KEY);
+  localStorage.removeItem(PLAYER_TOKEN_KEY);
+}
+
+function loadSession() {
+  const roomCode = localStorage.getItem(ROOM_CODE_KEY) || "";
+  const playerToken = localStorage.getItem(PLAYER_TOKEN_KEY) || "";
+  return { roomCode, playerToken };
+}
+
+function tryAutoRejoin() {
+  if (!socket || !isConnected) {
+    return;
+  }
+  const { roomCode, playerToken } = loadSession();
+  if (!roomCode || !playerToken) {
+    return;
+  }
+  socket.emit("rejoin_room", { roomCode, playerToken });
+  statusText.textContent = "Trying to reconnect to your previous room...";
 }
 
 function getAudioContext() {
@@ -245,9 +277,7 @@ function renderAll(state) {
   renderStatus(state);
   renderRoomInfo(state);
 
-  const roundKey = state?.gameOver
-    ? `${state.winner || "draw"}-${state.board.join("")}`
-    : "";
+  const roundKey = state?.gameOver ? `${state.winner || "draw"}-${state.board.join("")}` : "";
 
   if (state?.gameOver && roundKey && previousRoundKey !== roundKey) {
     if (state.winner && state.youRole === state.winner) {
@@ -275,6 +305,22 @@ function normalizeRoomCode() {
   return roomCodeInput.value.trim().toUpperCase();
 }
 
+async function copyRoomCode() {
+  const roomCode = normalizeRoomCode();
+  if (!roomCode) {
+    statusText.textContent = "No room code to copy yet.";
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(roomCode);
+    statusText.textContent = `Room code copied: ${roomCode}`;
+    playButtonSound();
+  } catch (_error) {
+    statusText.textContent = "Could not copy automatically. Please copy room code manually.";
+  }
+}
+
 setupTabBtn.addEventListener("click", () => {
   playButtonSound();
   setActiveTab("setup");
@@ -288,6 +334,10 @@ gameTabBtn.addEventListener("click", () => {
     return;
   }
   setActiveTab("game");
+});
+
+copyCodeBtn.addEventListener("click", () => {
+  copyRoomCode();
 });
 
 cells.forEach((cell) => {
@@ -330,6 +380,7 @@ leaveRoomBtn.addEventListener("click", () => {
   if (!socket || !isConnected) {
     return;
   }
+  clearSession();
   socket.emit("leave_room");
 });
 
@@ -361,6 +412,7 @@ if (!socket) {
   socket.on("connect", () => {
     isConnected = true;
     connectionText.textContent = "Connected";
+    tryAutoRejoin();
   });
 
   socket.on("disconnect", () => {
@@ -368,10 +420,18 @@ if (!socket) {
     connectionText.textContent = "Disconnected";
   });
 
-  socket.on("room_joined", ({ roomCode }) => {
+  socket.on("room_joined", ({ roomCode, playerToken }) => {
     inRoom = true;
     roomCodeInput.value = roomCode;
+    if (playerToken) {
+      storeSession(roomCode, playerToken);
+    }
     setActiveTab("setup");
+  });
+
+  socket.on("rejoin_failed", ({ message }) => {
+    clearSession();
+    statusText.textContent = message || "Could not reconnect to previous room.";
   });
 
   socket.on("room_left", () => {

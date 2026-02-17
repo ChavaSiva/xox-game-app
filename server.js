@@ -3,6 +3,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 
 const app = express();
 const server = http.createServer(app);
@@ -10,6 +11,7 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 const WEB_ROOT = path.join(__dirname, "public");
+const RECONNECT_GRACE_MS = 60000;
 
 const rooms = new Map();
 const socketSessions = new Map();
@@ -32,6 +34,28 @@ function generateRoomCode() {
     code += chars[Math.floor(Math.random() * chars.length)];
   }
   return code;
+}
+
+function generatePlayerToken() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function isPlayerConnected(room, role) {
+  return Boolean(room.players[role] && room.players[role].connected);
+}
+
+function clearReconnectTimer(slot) {
+  if (slot && slot.reconnectTimer) {
+    clearTimeout(slot.reconnectTimer);
+    slot.reconnectTimer = null;
+  }
+}
+
+function resetRound(room) {
+  room.board = Array(9).fill("");
+  room.turn = "X";
+  room.gameOver = false;
+  room.winner = "";
 }
 
 function checkWinner(board) {
@@ -61,8 +85,8 @@ function buildState(roomCode, role) {
     roomCode,
     board: room.board,
     players: {
-      X: Boolean(room.players.X),
-      O: Boolean(room.players.O),
+      X: isPlayerConnected(room, "X"),
+      O: isPlayerConnected(room, "O"),
     },
     turn: room.turn,
     gameOver: room.gameOver,
@@ -78,40 +102,81 @@ function emitRoomState(roomCode) {
     return;
   }
 
-  if (room.players.X) {
-    io.to(room.players.X).emit("room_state", buildState(roomCode, "X"));
-  }
-
-  if (room.players.O) {
-    io.to(room.players.O).emit("room_state", buildState(roomCode, "O"));
+  for (const role of ["X", "O"]) {
+    const slot = room.players[role];
+    if (slot && slot.connected && slot.socketId) {
+      io.to(slot.socketId).emit("room_state", buildState(roomCode, role));
+    }
   }
 }
 
-function detachFromRoom(socketId) {
+function removePlayerSlot(roomCode, role) {
+  const room = rooms.get(roomCode);
+  if (!room) {
+    return;
+  }
+
+  const slot = room.players[role];
+  if (!slot) {
+    return;
+  }
+
+  clearReconnectTimer(slot);
+  room.players[role] = null;
+
+  const hasX = Boolean(room.players.X);
+  const hasO = Boolean(room.players.O);
+
+  if (!hasX && !hasO) {
+    rooms.delete(roomCode);
+    return;
+  }
+
+  resetRound(room);
+  emitRoomState(roomCode);
+}
+
+function disconnectSession(socketId, keepForReconnect) {
   const session = socketSessions.get(socketId);
   if (!session) {
     return;
   }
 
   const room = rooms.get(session.roomCode);
-  if (!room) {
-    socketSessions.delete(socketId);
-    return;
-  }
-
-  room.players[session.role] = null;
   socketSessions.delete(socketId);
 
-  const hasAnyPlayer = Boolean(room.players.X || room.players.O);
-  if (!hasAnyPlayer) {
-    rooms.delete(session.roomCode);
+  if (!room) {
     return;
   }
 
-  room.board = Array(9).fill("");
-  room.turn = "X";
-  room.gameOver = false;
-  room.winner = "";
+  const slot = room.players[session.role];
+  if (!slot || slot.token !== session.token) {
+    return;
+  }
+
+  if (!keepForReconnect) {
+    removePlayerSlot(session.roomCode, session.role);
+    return;
+  }
+
+  slot.connected = false;
+  slot.socketId = null;
+  clearReconnectTimer(slot);
+
+  slot.reconnectTimer = setTimeout(() => {
+    const liveRoom = rooms.get(session.roomCode);
+    if (!liveRoom) {
+      return;
+    }
+    const liveSlot = liveRoom.players[session.role];
+    if (!liveSlot) {
+      return;
+    }
+    if (!liveSlot.connected && liveSlot.token === session.token) {
+      removePlayerSlot(session.roomCode, session.role);
+    }
+  }, RECONNECT_GRACE_MS);
+
   emitRoomState(session.roomCode);
 }
 
@@ -149,7 +214,7 @@ app.get("/health", (_req, res) => {
 
 io.on("connection", (socket) => {
   socket.on("create_room", () => {
-    detachFromRoom(socket.id);
+    disconnectSession(socket.id, false);
 
     let roomCode = "";
     do {
@@ -157,12 +222,20 @@ io.on("connection", (socket) => {
     } while (rooms.has(roomCode));
 
     const room = createEmptyRoom();
-    room.players.X = socket.id;
+    const token = generatePlayerToken();
+
+    room.players.X = {
+      socketId: socket.id,
+      token,
+      connected: true,
+      reconnectTimer: null,
+    };
+
     rooms.set(roomCode, room);
-    socketSessions.set(socket.id, { roomCode, role: "X" });
+    socketSessions.set(socket.id, { roomCode, role: "X", token });
     socket.join(roomCode);
 
-    socket.emit("room_joined", { roomCode });
+    socket.emit("room_joined", { roomCode, role: "X", playerToken: token });
     emitRoomState(roomCode);
   });
 
@@ -179,7 +252,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    detachFromRoom(socket.id);
+    disconnectSession(socket.id, false);
 
     if (room.players.X && room.players.O) {
       socket.emit("server_error", { message: "Room is full." });
@@ -187,11 +260,62 @@ io.on("connection", (socket) => {
     }
 
     const role = room.players.X ? "O" : "X";
-    room.players[role] = socket.id;
-    socketSessions.set(socket.id, { roomCode: normalizedCode, role });
+    const token = generatePlayerToken();
+
+    room.players[role] = {
+      socketId: socket.id,
+      token,
+      connected: true,
+      reconnectTimer: null,
+    };
+
+    socketSessions.set(socket.id, { roomCode: normalizedCode, role, token });
     socket.join(normalizedCode);
 
-    socket.emit("room_joined", { roomCode: normalizedCode });
+    socket.emit("room_joined", { roomCode: normalizedCode, role, playerToken: token });
+    emitRoomState(normalizedCode);
+  });
+
+  socket.on("rejoin_room", ({ roomCode, playerToken } = {}) => {
+    const normalizedCode = (roomCode || "").trim().toUpperCase();
+    const token = (playerToken || "").trim();
+
+    if (!normalizedCode || !token) {
+      socket.emit("server_error", { message: "Reconnect info missing." });
+      return;
+    }
+
+    const room = rooms.get(normalizedCode);
+    if (!room) {
+      socket.emit("rejoin_failed", { message: "Previous room no longer exists." });
+      return;
+    }
+
+    let role = "";
+    for (const candidate of ["X", "O"]) {
+      const slot = room.players[candidate];
+      if (slot && slot.token === token) {
+        role = candidate;
+        break;
+      }
+    }
+
+    if (!role) {
+      socket.emit("rejoin_failed", { message: "Reconnect session expired." });
+      return;
+    }
+
+    disconnectSession(socket.id, false);
+
+    const slot = room.players[role];
+    clearReconnectTimer(slot);
+    slot.connected = true;
+    slot.socketId = socket.id;
+
+    socketSessions.set(socket.id, { roomCode: normalizedCode, role, token });
+    socket.join(normalizedCode);
+
+    socket.emit("room_joined", { roomCode: normalizedCode, role, playerToken: token });
     emitRoomState(normalizedCode);
   });
 
@@ -202,7 +326,7 @@ io.on("connection", (socket) => {
     }
 
     socket.leave(session.roomCode);
-    detachFromRoom(socket.id);
+    disconnectSession(socket.id, false);
     socket.emit("room_left");
   });
 
@@ -218,7 +342,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (!room.players.X || !room.players.O) {
+    if (!isPlayerConnected(room, "X") || !isPlayerConnected(room, "O")) {
       socket.emit("server_error", { message: "Waiting for second player." });
       return;
     }
@@ -272,10 +396,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    room.board = Array(9).fill("");
-    room.turn = "X";
-    room.gameOver = false;
-    room.winner = "";
+    resetRound(room);
     emitRoomState(session.roomCode);
   });
 
@@ -291,15 +412,12 @@ io.on("connection", (socket) => {
     }
 
     room.scores = { X: 0, O: 0, draw: 0 };
-    room.board = Array(9).fill("");
-    room.turn = "X";
-    room.gameOver = false;
-    room.winner = "";
+    resetRound(room);
     emitRoomState(session.roomCode);
   });
 
   socket.on("disconnect", () => {
-    detachFromRoom(socket.id);
+    disconnectSession(socket.id, true);
   });
 });
 
