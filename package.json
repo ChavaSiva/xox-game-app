@@ -1,0 +1,28 @@
+﻿{
+  "name": "xox-game-app",
+  "version": "1.0.0",
+  "description": "XOX game with colorful UI and real-time multiplayer via Socket.IO.",
+  "main": "server.js",
+  "scripts": {
+    "sync:public": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Copy-Item index.html,styles.css,app.js -Destination public -Force\"",
+    "start": "npm run sync:public && node server.js",
+    "copy:web": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Copy-Item index.html,styles.css,app.js -Destination www -Force\"",
+    "cap:sync": "npm run copy:web && npx cap sync",
+    "cap:android": "npm run cap:sync && npx cap open android",
+    "cap:ios": "npm run cap:sync && npx cap open ios"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
+    "@capacitor/ios": "^6.2.1",
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5"
+  }
+}

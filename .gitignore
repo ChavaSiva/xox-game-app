@@ -1,0 +1,7 @@
+﻿node_modules/
+.env
+*.log
+*.jks
+android/upload-keystore.jks
+.DS_Store
+Thumbs.db

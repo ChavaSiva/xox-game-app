@@ -1,0 +1,8 @@
+﻿services:
+  - type: web
+    name: xox-online-game
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    autoDeploy: true

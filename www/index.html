@@ -1,0 +1,83 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XOX Game</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <h1>XOX Online</h1>
+
+    <div class="tabs" role="tablist" aria-label="App sections">
+      <button id="setupTabBtn" class="tab-btn active" role="tab" aria-selected="true">Setup</button>
+      <button id="gameTabBtn" class="tab-btn" role="tab" aria-selected="false" disabled>Game</button>
+    </div>
+    <div class="utility-row">
+      <button id="soundToggleBtn" class="reset sound-toggle">Sound: ON</button>
+    </div>
+
+    <section id="setupScreen" class="screen">
+      <section class="lobby" aria-label="Room controls">
+        <p id="connectionText" class="connection">Connecting...</p>
+        <div class="lobby-row">
+          <input id="roomCodeInput" class="room-input" maxlength="8" placeholder="Room Code" />
+        </div>
+        <div class="lobby-actions">
+          <button id="createRoomBtn" class="reset">Create Room</button>
+          <button id="joinRoomBtn" class="reset reset-score">Join Room</button>
+          <button id="leaveRoomBtn" class="reset leave">Leave</button>
+        </div>
+        <p id="roomInfo" class="hint">Create a room and share code with your friend.</p>
+      </section>
+    </section>
+
+    <section id="gameScreen" class="screen hidden">
+      <section class="scoreboard" aria-label="Game scoreboard">
+        <div class="score-card">
+          <span class="label">Player X</span>
+          <strong id="scoreX" class="value">0</strong>
+        </div>
+        <div class="score-card">
+          <span class="label">Draws</span>
+          <strong id="scoreDraw" class="value">0</strong>
+        </div>
+        <div class="score-card">
+          <span class="label">Player O</span>
+          <strong id="scoreO" class="value">0</strong>
+        </div>
+      </section>
+
+      <p id="status" class="status" aria-live="polite">Create or join a room to start.</p>
+
+      <section class="board" id="board" aria-label="Tic Tac Toe board">
+        <button class="cell" data-index="0" aria-label="Cell 1"></button>
+        <button class="cell" data-index="1" aria-label="Cell 2"></button>
+        <button class="cell" data-index="2" aria-label="Cell 3"></button>
+        <button class="cell" data-index="3" aria-label="Cell 4"></button>
+        <button class="cell" data-index="4" aria-label="Cell 5"></button>
+        <button class="cell" data-index="5" aria-label="Cell 6"></button>
+        <button class="cell" data-index="6" aria-label="Cell 7"></button>
+        <button class="cell" data-index="7" aria-label="Cell 8"></button>
+        <button class="cell" data-index="8" aria-label="Cell 9"></button>
+      </section>
+
+      <div class="actions">
+        <button id="resetBtn" class="reset">Restart Round</button>
+        <button id="resetScoreBtn" class="reset reset-score">Reset Score</button>
+      </div>
+
+      <p class="hint">Play with friend on another device using same room code.</p>
+    </section>
+  </main>
+
+  <div id="celebration" class="celebration" aria-hidden="true">
+    <p id="celebrationText" class="celebration-text"></p>
+    <div class="confetti-wrap" id="confettiWrap"></div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
